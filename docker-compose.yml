@@ -1,0 +1,19 @@
+# docker-compose.yml
+version: "3.8"
+
+services:
+  app:
+    build:
+      context: .
+      # you can pass build args if you need build-time envs
+      # args:
+      #   NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+    image: my-next-app:latest
+    restart: always
+    env_file:
+      - .env        # runtime envs (do not commit .env with secrets)
+    ports:
+      - "3000:3000"
+    # If you want persistent logs or to serve from host volume in dev:
+    # volumes:
+    #   - ./:/app:ro
