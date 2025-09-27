@@ -23,7 +23,7 @@ RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
 # Copy only what is needed for runtime
 COPY package.json package-lock.json ./
-RUN npm ci --production
+RUN npm ci --omit=dev
 
 # Copy built files and public assets
 COPY --from=builder /app/.next ./.next

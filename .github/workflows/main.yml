@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: [self-hosted, linux]
+    runs-on: [local, faxmachine]
     outputs:
       image: ${{ steps.set-image.outputs.image }}
       push_latest: ${{ steps.prepare.outputs.push_latest }}
@@ -18,7 +18,6 @@ jobs:
 
       - name: Prepare tags
         id: prepare
-        # prepare SHORT_SHA and decide whether to push latest
         run: |
           echo "SHORT_SHA=${GITHUB_SHA::8}" >> $GITHUB_ENV
           BRANCH="${GITHUB_REF#refs/heads/}"
@@ -28,32 +27,50 @@ jobs:
             echo "push_latest=0" >> $GITHUB_OUTPUT
           fi
 
-      - name: Show runner info (debug)
+      - name: Fix DNS and add swap
+        run: |
+          echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+          if [ ! -f /swapfile ]; then
+            sudo fallocate -l 2G /swapfile
+            sudo chmod 600 /swapfile
+            sudo mkswap /swapfile
+            sudo swapon /swapfile
+          fi
+          free -h
+
+      - name: Show runner info
         run: |
           echo "Runner: $(hostname)"
-          docker --version || true
-          docker info || true
+          docker --version
+          docker info
 
-      - name: Login to Docker Hub (for local tagging if needed)
+      - name: Login to Docker Hub
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build Docker image
+      - name: Enable Docker layer caching
         run: |
-          # Build image with short sha tag
-          docker build -t "${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}" .
+          mkdir -p /tmp/.buildx-cache
+          docker buildx create --use || true
 
-      - name: Save image to tar
+      - name: Build Docker image (stable)
         run: |
-          docker save -o image.tar "${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}"
+          ( while sleep 30; do echo "Still building..."; done ) &
+          KEEPALIVE=$!
+          docker build \
+            --progress=plain \
+            --memory=2g --memory-swap=2g --cpus=2 \
+            --cache-from=type=local,src=/tmp/.buildx-cache \
+            --cache-to=type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            -t "${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}" .
+          kill $KEEPALIVE
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
-      - name: Upload image artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: image-tar
-          path: image.tar
+      - name: Push image to Docker Hub
+        run: docker push "${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}"
 
       - name: Set image output
         id: set-image
@@ -65,17 +82,11 @@ jobs:
     runs-on: [self-hosted, linux]
 
     steps:
-      - name: Download image artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: image-tar
-          path: .
-
-      - name: Show runner info (debug)
+      - name: Show runner info
         run: |
           echo "Runner: $(hostname)"
-          docker --version || true
-          docker info || true
+          docker --version
+          docker info
 
       - name: Login to Docker Hub
         uses: docker/login-action@v2
@@ -83,19 +94,13 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Load docker image from tar
-        run: docker load -i image.tar
-
-      - name: Push image (sha tag)
-        run: |
-          docker push "${{ needs.build.outputs.image }}"
-
-      - name: Tag and push latest (only on main)
+      - name: Pull and push latest (only on main)
         if: needs.build.outputs.push_latest == '1'
         run: |
-          IMAGE_FULL="${{ needs.build.outputs.image }}"
-          REPO="${IMAGE_FULL%:*}"
-          docker tag "${IMAGE_FULL}" "${REPO}:latest"
+          IMAGE="${{ needs.build.outputs.image }}"
+          REPO="${IMAGE%:*}"
+          docker pull "$IMAGE"
+          docker tag "$IMAGE" "${REPO}:latest"
           docker push "${REPO}:latest"
 
       - name: Output pushed image names
