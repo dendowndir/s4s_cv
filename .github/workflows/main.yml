@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: [self-hosted, linux]
+    runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.set-image.outputs.image }}
       push_latest: ${{ steps.prepare.outputs.push_latest }}
