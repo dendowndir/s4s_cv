@@ -50,7 +50,6 @@ jobs:
           KEEPALIVE=$!
           docker build \
             --progress=plain \
-            --memory=2g --memory-swap=2g --cpus=2 \
             --cache-from=type=local,src=/tmp/.buildx-cache \
             --cache-to=type=local,dest=/tmp/.buildx-cache-new,mode=max \
             -t "${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}" .
