@@ -27,17 +27,6 @@ jobs:
             echo "push_latest=0" >> $GITHUB_OUTPUT
           fi
 
-      - name: Fix DNS and add swap
-        run: |
-          echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
-          if [ ! -f /swapfile ]; then
-            sudo fallocate -l 2G /swapfile
-            sudo chmod 600 /swapfile
-            sudo mkswap /swapfile
-            sudo swapon /swapfile
-          fi
-          free -h
-
       - name: Show runner info
         run: |
           echo "Runner: $(hostname)"
@@ -61,13 +50,9 @@ jobs:
           KEEPALIVE=$!
           docker build \
             --progress=plain \
-            --memory=2g --memory-swap=2g --cpus=2 \
-            --cache-from=type=local,src=/tmp/.buildx-cache \
-            --cache-to=type=local,dest=/tmp/.buildx-cache-new,mode=max \
             -t "${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}" .
           kill $KEEPALIVE
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
 
       - name: Push image to Docker Hub
         run: docker push "${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}"
