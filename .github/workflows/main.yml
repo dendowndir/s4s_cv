@@ -50,12 +50,9 @@ jobs:
           KEEPALIVE=$!
           docker build \
             --progress=plain \
-            --cache-from=type=local,src=/tmp/.buildx-cache \
-            --cache-to=type=local,dest=/tmp/.buildx-cache-new,mode=max \
             -t "${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}" .
           kill $KEEPALIVE
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
 
       - name: Push image to Docker Hub
         run: docker push "${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}"
