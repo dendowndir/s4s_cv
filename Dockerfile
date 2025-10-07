@@ -1,6 +1,6 @@
 # Dockerfile
 # Stage 1: build
-FROM node:18-alpine AS builder
+FROM node:18-bullseye AS builder
 WORKDIR /app
 
 # Install build deps
@@ -13,7 +13,7 @@ COPY . .
 RUN npm run build
 
 # Stage 2: runtime
-FROM node:18-alpine AS runner
+FROM node:18-bullseye AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
