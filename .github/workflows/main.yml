@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: [self-hosted, linux]
+    runs-on: [local, faxmachine]
     outputs:
       image: ${{ steps.set-image.outputs.image }}
       push_latest: ${{ steps.prepare.outputs.push_latest }}
@@ -43,7 +43,10 @@ jobs:
       - name: Build Docker image
         run: |
           # Build image with short sha tag
-          docker build -t "${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}" .
+          # --memory=2g --memory-swap=1g --cpus=1 \
+          
+          docker build \
+            -t "${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}" .
 
       - name: Save image to tar
         run: |
