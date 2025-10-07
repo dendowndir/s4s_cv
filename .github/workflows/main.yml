@@ -27,17 +27,6 @@ jobs:
             echo "push_latest=0" >> $GITHUB_OUTPUT
           fi
 
-      - name: Fix DNS and add swap
-        run: |
-          echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
-          if [ ! -f /swapfile ]; then
-            sudo fallocate -l 2G /swapfile
-            sudo chmod 600 /swapfile
-            sudo mkswap /swapfile
-            sudo swapon /swapfile
-          fi
-          free -h
-
       - name: Show runner info
         run: |
           echo "Runner: $(hostname)"
