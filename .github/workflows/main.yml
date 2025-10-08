@@ -37,6 +37,7 @@ jobs:
             echo "push_latest=1" >> $GITHUB_OUTPUT
           else
             echo "push_latest=0" >> $GITHUB_OUTPUT
+          fi
 
       - name: Show runner info
         run: |
