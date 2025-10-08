@@ -20,13 +20,18 @@ jobs:
         run: |
           echo "Cleaning previous Docker images from this workflow..."
           IMAGE_PATTERN="${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:*"
-          # List images matching pattern
           EXISTING_IMAGES=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "^${IMAGE_PATTERN}" || true)
           if [ -n "$EXISTING_IMAGES" ]; then
-            echo "$EXISTING_IMAGES" | xargs docker rmi -f
+            echo "$EXISTING_IMAGES" | xargs docker rmi -f || true
           else
             echo "No old images to remove"
           fi
+          
+      - name: Free up Docker space
+        run: |
+          echo "Cleaning unused Docker data..."
+          docker system prune -af
+          # docker volume prune -f
 
       - name: Prepare tags
         id: prepare
@@ -37,6 +42,7 @@ jobs:
             echo "push_latest=1" >> $GITHUB_OUTPUT
           else
             echo "push_latest=0" >> $GITHUB_OUTPUT
+          fi
 
       - name: Show runner info
         run: |
@@ -46,18 +52,25 @@ jobs:
 
       - name: Build Docker image
         run: |
-          ( while sleep 120; do echo "Still building..."; done ) &
-          KEEPALIVE=$!
-          docker build \
-            --progress=plain \
-            -t "${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}" .
-          kill $KEEPALIVE
+          docker build -t "${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}" .
 
+      - name: Save image to tar
+        run: docker save -o image.tar "${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}"
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-tar
+          path: image.tar
+
+      - name: Set image output
+        id: set-image
+        run: |
+          echo "image=${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}" >> $GITHUB_OUTPUT
 
   push:
     needs: build
-    runs-on: [self-hosted, linux]
-
+    runs-on: [local, faxmachine]
     steps:
       - name: Show runner info
         run: |
@@ -77,7 +90,7 @@ jobs:
           name: image-tar
           path: .
 
-      - name: Load Docker image
+      - name: Load Docker image from tar
         run: docker load -i image.tar
 
       - name: Push SHA image
