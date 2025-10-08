@@ -18,20 +18,12 @@ jobs:
 
       - name: Clean previous Docker images
         run: |
-          echo "Cleaning previous Docker images from this workflow..."
+          echo "Cleaning previous Docker images..."
           IMAGE_PATTERN="${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:*"
           EXISTING_IMAGES=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "^${IMAGE_PATTERN}" || true)
           if [ -n "$EXISTING_IMAGES" ]; then
             echo "$EXISTING_IMAGES" | xargs docker rmi -f || true
-          else
-            echo "No old images to remove"
           fi
-          
-      - name: Free up Docker space
-        run: |
-          echo "Cleaning unused Docker data..."
-          docker system prune -af
-          # docker volume prune -f
 
       - name: Prepare tags
         id: prepare
@@ -44,29 +36,19 @@ jobs:
             echo "push_latest=0" >> $GITHUB_OUTPUT
           fi
 
-      - name: Show runner info
-        run: |
-          echo "Runner: $(hostname)"
-          docker --version
-          docker info
-
       - name: Build Docker image
         run: |
           docker build -t "${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}" .
 
-      - name: Save image to tar
-        run: docker save -o image.tar "${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}"
-
-      - name: Upload image artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: image-tar
-          path: image.tar
+      - name: Save image to workspace
+        run: |
+          docker save -o "$GITHUB_WORKSPACE/image.tar" "${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}"
 
       - name: Set image output
         id: set-image
         run: |
           echo "image=${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}" >> $GITHUB_OUTPUT
+
 
   push:
     needs: build
@@ -84,14 +66,8 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Download image artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: image-tar
-          path: .
-
-      - name: Load Docker image from tar
-        run: docker load -i image.tar
+      - name: Load Docker image from previous job
+        run: docker load -i "$GITHUB_WORKSPACE/image.tar"
 
       - name: Push SHA image
         run: docker push "${{ needs.build.outputs.image }}"
@@ -103,10 +79,3 @@ jobs:
           REPO="${IMAGE%:*}"
           docker tag "$IMAGE" "${REPO}:latest"
           docker push "${REPO}:latest"
-
-      - name: Output pushed image names
-        run: |
-          echo "Pushed image: ${{ needs.build.outputs.image }}"
-          if [ "${{ needs.build.outputs.push_latest }}" = "1" ]; then
-            echo "Pushed image: ${REPO}:latest"
-          fi
