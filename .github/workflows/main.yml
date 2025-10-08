@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: [local, faxmachine]
+    runs-on: [dockermachine]
     outputs:
       image: ${{ steps.set-image.outputs.image }}
       push_latest: ${{ steps.prepare.outputs.push_latest }}
@@ -16,61 +16,99 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Clean previous Docker images
-        run: |
-          echo "Cleaning previous Docker images from this workflow..."
-          IMAGE_PATTERN="${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:*"
-          EXISTING_IMAGES=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "^${IMAGE_PATTERN}" || true)
-          if [ -n "$EXISTING_IMAGES" ]; then
-            echo "$EXISTING_IMAGES" | xargs docker rmi -f || true
-          else
-            echo "No old images to remove"
-          fi
-          
-      - name: Free up Docker space
-        run: |
-          echo "Cleaning unused Docker data..."
-          docker system prune -af
-          # docker volume prune -f
-
-      - name: Prepare tags
+      - name: Prepare tags (do it before cleaning)
         id: prepare
         run: |
-          echo "SHORT_SHA=${GITHUB_SHA::8}" >> $GITHUB_ENV
+          SHORT_SHA=${GITHUB_SHA::8}
+          echo "SHORT_SHA=${SHORT_SHA}" >> $GITHUB_ENV
           BRANCH="${GITHUB_REF#refs/heads/}"
           if [ "$BRANCH" = "main" ]; then
             echo "push_latest=1" >> $GITHUB_OUTPUT
           else
             echo "push_latest=0" >> $GITHUB_OUTPUT
           fi
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF: ${{ github.ref }}
 
-      - name: Show runner info
+      - name: Clean previous images of this repo only
         run: |
-          echo "Runner: $(hostname)"
-          docker --version
-          docker info
+          # remove only images with repo ${DOCKERHUB_USERNAME}/s4s_cv except current tag
+          echo "Cleaning previous images for ${DOCKERHUB_USERNAME}/s4s_cv except ${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA}"
+          set -o pipefail || true
+          IMAGE_PREFIX="${DOCKERHUB_USERNAME}/s4s_cv:"
+          CURRENT_TAG="${IMAGE_PREFIX}${SHORT_SHA}"
+          docker images --format '{{.Repository}}:{{.Tag}}' \
+            | grep "^${IMAGE_PREFIX}" || true \
+            | grep -v -x "${CURRENT_TAG}" || true \
+            | xargs -r docker rmi -f || true
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          SHORT_SHA: ${{ env.SHORT_SHA }}
 
-      - name: Build Docker image
-        run: |
-          docker build -t "${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}" .
+      - name: Setup buildx
+        uses: docker/setup-buildx-action@v2
 
-      - name: Save image to tar
-        run: docker save -o image.tar "${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}"
-
-      - name: Upload image artifact
-        uses: actions/upload-artifact@v4
+      - name: Login to Docker Hub (needed for cache push/pull)
+        uses: docker/login-action@v2
         with:
-          name: image-tar
-          path: image.tar
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Set image output
+      - name: Build Docker image with buildx and registry cache
+        run: |
+          SHORT_SHA=${SHORT_SHA:-${GITHUB_SHA::8}}
+          IMAGE="${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA}"
+          CACHE_REF="${DOCKERHUB_USERNAME}/s4s_cv:buildcache"
+          echo "Building ${IMAGE}, using cache ${CACHE_REF}"
+          # buildx: use registry cache backend (stores cache as an image CACHE_REF)
+          docker buildx build \
+            --tag "${IMAGE}" \
+            --cache-from "type=registry,ref=${CACHE_REF}" \
+            --cache-to "type=registry,ref=${CACHE_REF},mode=max,push=true" \
+            --load \
+            .
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          SHORT_SHA: ${{ env.SHORT_SHA }}
+          GITHUB_SHA: ${{ github.sha }}
+
+      - name: Save image to workspace
+        run: |
+          IMAGE="${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA}"
+          docker save -o "$GITHUB_WORKSPACE/image.tar" "$IMAGE"
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          SHORT_SHA: ${{ env.SHORT_SHA }}
+
+      - name: Set image output (robust)
         id: set-image
         run: |
-          echo "image=${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}" >> $GITHUB_OUTPUT
+          SHORT_SHA="${SHORT_SHA:-${GITHUB_SHA::8}}"
+          IMAGE="${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA}"
+          echo "IMAGE_DEBUG=$IMAGE"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          SHORT_SHA: ${{ env.SHORT_SHA }}
+          GITHUB_SHA: ${{ github.sha }}
+
+      - name: Persist image name to workspace (workaround for job-output propagation)
+        run: |
+          echo "${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA}" > "$GITHUB_WORKSPACE/image-name.txt"
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          SHORT_SHA: ${{ env.SHORT_SHA }}
+
+      - name: Prune buildx builder cache (keep recent + cap local storage)
+        run: |
+          # keep cache used in the last 7 days, and cap local builder storage to ~10GiB
+          # this prevents unbounded local growth on the runner
+          docker buildx prune --filter "until=168h" --keep-storage 10737418240 --force --all || true
 
   push:
     needs: build
-    runs-on: [local, faxmachine]
+    runs-on: [dockermachine]
     steps:
       - name: Show runner info
         run: |
@@ -84,29 +122,19 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Download image artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: image-tar
-          path: .
+      - name: Load Docker image from previous job
+        run: docker load -i "$GITHUB_WORKSPACE/image.tar"
 
-      - name: Load Docker image from tar
-        run: docker load -i image.tar
-
-      - name: Push SHA image
-        run: docker push "${{ needs.build.outputs.image }}"
+      - name: Read image name from workspace and push
+        run: |
+          IMAGE=$(cat "$GITHUB_WORKSPACE/image-name.txt")
+          echo "IMAGE from file: $IMAGE"
+          docker push "$IMAGE"
 
       - name: Tag and push latest (only on main)
         if: needs.build.outputs.push_latest == '1'
         run: |
-          IMAGE="${{ needs.build.outputs.image }}"
+          IMAGE=$(cat "$GITHUB_WORKSPACE/image-name.txt")
           REPO="${IMAGE%:*}"
           docker tag "$IMAGE" "${REPO}:latest"
           docker push "${REPO}:latest"
-
-      - name: Output pushed image names
-        run: |
-          echo "Pushed image: ${{ needs.build.outputs.image }}"
-          if [ "${{ needs.build.outputs.push_latest }}" = "1" ]; then
-            echo "Pushed image: ${REPO}:latest"
-          fi
