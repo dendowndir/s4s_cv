@@ -26,6 +26,12 @@ jobs:
           else
             echo "No old images to remove"
           fi
+          
+      - name: Free up Docker space
+        run: |
+          echo "Cleaning unused Docker data..."
+          docker system prune -af
+          # docker volume prune -f
 
       - name: Prepare tags
         id: prepare
