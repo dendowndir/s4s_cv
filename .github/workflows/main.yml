@@ -46,7 +46,7 @@ jobs:
 
       - name: Build Docker image (stable)
         run: |
-          ( while sleep 30; do echo "Still building..."; done ) &
+          ( while sleep 120; do echo "Still building..."; done ) &
           KEEPALIVE=$!
           docker build \
             --progress=plain \
