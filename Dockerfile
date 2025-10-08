@@ -25,7 +25,6 @@ RUN npm prune --omit=dev
 # Copy built files and public assets
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
-COPY next.config.js ./next.config.js
 COPY package.json package-lock.json ./  # needed for runtime scripts
 
 # Set ownership
