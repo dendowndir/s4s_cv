@@ -47,7 +47,11 @@ jobs:
       - name: Set image output
         id: set-image
         run: |
-          echo "image=${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "image=${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA}" >> $GITHUB_OUTPUT
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          SHORT_SHA: ${{ env.SHORT_SHA }}
+
 
 
   push:
