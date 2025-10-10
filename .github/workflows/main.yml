@@ -47,10 +47,11 @@ jobs:
       - name: Set image output
         id: set-image
         run: |
-          echo "image=${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "Using SHORT_SHA=$SHORT_SHA"            # debug — safe to keep
+          IMAGE="${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA}"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          SHORT_SHA: ${{ env.SHORT_SHA }}
 
 
 
@@ -73,6 +74,10 @@ jobs:
       - name: Load Docker image from previous job
         run: docker load -i "$GITHUB_WORKSPACE/image.tar"
 
+      - name: Debug image output
+        run: |
+          echo "needs.build.outputs.image='${{ needs.build.outputs.image }}'"
+      
       - name: Push SHA image
         run: docker push "${{ needs.build.outputs.image }}"
 
