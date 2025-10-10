@@ -44,12 +44,15 @@ jobs:
         run: |
           docker save -o "$GITHUB_WORKSPACE/image.tar" "${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}"
 
-      - name: Set image output
+      - name: Set image output (debug)
         id: set-image
         run: |
-          echo "Using SHORT_SHA=$SHORT_SHA"            # debug — safe to keep
+          echo "GITHUB_OUTPUT file path: $GITHUB_OUTPUT"
+          echo "Using SHORT_SHA='$SHORT_SHA'"
           IMAGE="${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA}"
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "wrote to $GITHUB_OUTPUT:"
+          cat "$GITHUB_OUTPUT" || true
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
 
