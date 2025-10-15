@@ -79,10 +79,11 @@ jobs:
 
       - name: Debug image output
         run: |
-          echo "needs.build.outputs.image='${{ needs.build.outputs.image }}'"
+          echo "needs.build.outputs='${{ needs.build.outputs }}'"
+          echo "steps.set-image.outputs.image='${{ steps.set-image.outputs.image }}'"
       
       - name: Push SHA image
-        run: docker push "${{ needs.build.outputs.image }}"
+        run: docker push "${{ steps.set-image.outputs.image }}"
 
       - name: Tag and push latest (only on main)
         if: needs.build.outputs.push_latest == '1'
