@@ -44,18 +44,21 @@ jobs:
         run: |
           docker save -o "$GITHUB_WORKSPACE/image.tar" "${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${SHORT_SHA}"
 
-      - name: Set image output (debug)
+      - name: Set image output (robust)
         id: set-image
         run: |
-          echo "GITHUB_OUTPUT file path: $GITHUB_OUTPUT"
-          echo "Using SHORT_SHA='$SHORT_SHA'"
+          SHORT_SHA="${SHORT_SHA:-${GITHUB_SHA::8}}"
           IMAGE="${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA}"
+          echo "IMAGE_DEBUG=$IMAGE"
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
-          echo "wrote to $GITHUB_OUTPUT:"
-          cat "$GITHUB_OUTPUT" || true
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
 
+      - name: Persist image name to workspace (workaround for job-output propagation)
+        run: |
+          echo "${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA}" > "$GITHUB_WORKSPACE/image-name.txt"
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
 
 
   push:
@@ -77,18 +80,16 @@ jobs:
       - name: Load Docker image from previous job
         run: docker load -i "$GITHUB_WORKSPACE/image.tar"
 
-      - name: Debug image output
+      - name: Read image name from workspace and push
         run: |
-          echo "needs.build.outputs='${{ needs.build.outputs }}'"
-          echo "steps.set-image.outputs.image='${{ steps.set-image.outputs.image }}'"
-      
-      - name: Push SHA image
-        run: docker push "${{ steps.set-image.outputs.image }}"
+          IMAGE=$(cat "$GITHUB_WORKSPACE/image-name.txt")
+          echo "IMAGE from file: $IMAGE"
+          docker push "$IMAGE"
 
       - name: Tag and push latest (only on main)
         if: needs.build.outputs.push_latest == '1'
         run: |
-          IMAGE="${{ needs.build.outputs.image }}"
+          IMAGE=$(cat "$GITHUB_WORKSPACE/image-name.txt")
           REPO="${IMAGE%:*}"
           docker tag "$IMAGE" "${REPO}:latest"
           docker push "${REPO}:latest"
