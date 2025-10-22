@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: [local, dockermachine]
+    runs-on: [dockermachine]
     outputs:
       image: ${{ steps.set-image.outputs.image }}
       push_latest: ${{ steps.prepare.outputs.push_latest }}
@@ -108,7 +108,7 @@ jobs:
 
   push:
     needs: build
-    runs-on: [local, dockermachine]
+    runs-on: [dockermachine]
     steps:
       - name: Show runner info
         run: |
