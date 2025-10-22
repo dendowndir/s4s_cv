@@ -87,13 +87,26 @@ jobs:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           SHORT_SHA: ${{ env.SHORT_SHA }}
 
+      - name: Verify image tar exists
+        run: |
+          echo "Workspace: $GITHUB_WORKSPACE"
+          ls -la "$GITHUB_WORKSPACE"
+          if [ ! -f "$GITHUB_WORKSPACE/image.tar" ]; then
+            echo "::error::image.tar not found at $GITHUB_WORKSPACE/image.tar"
+            exit 1
+          fi
+          echo "image.tar size:"
+          du -h "$GITHUB_WORKSPACE/image.tar"
+
+
       - name: Upload built image artifact
         uses: actions/upload-artifact@v4
         with:
           name: image-tar
           path: |
-            $GITHUB_WORKSPACE/image.tar
-            $GITHUB_WORKSPACE/image-name.txt
+            image.tar
+            image-name.txt
+
 
       - name: Set image output (robust)
         id: set-image
