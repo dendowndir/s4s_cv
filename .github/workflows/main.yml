@@ -9,8 +9,9 @@ jobs:
   build:
     runs-on: [local, dockermachine]
     outputs:
-      image: ${{ steps.set-image.outputs.image }}
+      image_tag: ${{ steps.set-image.outputs.image_tag }}
       push_latest: ${{ steps.prepare.outputs.push_latest }}
+
 
     steps:
       - name: Checkout repository
@@ -84,9 +85,8 @@ jobs:
         id: set-image
         run: |
           SHORT_SHA="${SHORT_SHA:-${GITHUB_SHA::8}}"
-          IMAGE="${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA}"
-          echo "IMAGE_DEBUG=$IMAGE"
-          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          # export only the tag (non-secret). DOCKERHUB_USERNAME is a secret and must not be embedded in outputs.
+          echo "image_tag=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           SHORT_SHA: ${{ env.SHORT_SHA }}
@@ -112,7 +112,7 @@ jobs:
 
       - name: Pull image on remote runner
         run: |
-          IMAGE="${{ needs.build.outputs.image }}"
+          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${{ needs.build.outputs.image_tag }}"
           echo "Pulling $IMAGE on remote"
           docker pull "$IMAGE"
 
