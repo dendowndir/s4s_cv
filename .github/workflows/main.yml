@@ -9,8 +9,9 @@ jobs:
   build:
     runs-on: [local, dockermachine]
     outputs:
-      image: ${{ steps.set-image.outputs.image }}
+      image_tag: ${{ steps.set-image.outputs.image_tag }}
       push_latest: ${{ steps.prepare.outputs.push_latest }}
+
 
     steps:
       - name: Checkout repository
@@ -48,7 +49,7 @@ jobs:
       - name: Setup buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: Login to Docker Hub (needed for cache push/pull)
+      - name: Login to Docker Hub (needed for cache push/pull and push)
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -71,50 +72,21 @@ jobs:
           SHORT_SHA: ${{ env.SHORT_SHA }}
           GITHUB_SHA: ${{ github.sha }}
 
-      - name: Save image to workspace
+      - name: Push built image to Docker Hub
         run: |
           IMAGE="${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA}"
-          # Save tar to workspace path that will be uploaded as artifact
-          docker save -o "$GITHUB_WORKSPACE/image.tar" "$IMAGE"
+          echo "Pushing ${IMAGE}"
+          docker push "$IMAGE"
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           SHORT_SHA: ${{ env.SHORT_SHA }}
-
-      - name: Persist image name to workspace (workaround for job-output propagation)
-        run: |
-          echo "${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA}" > "$GITHUB_WORKSPACE/image-name.txt"
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          SHORT_SHA: ${{ env.SHORT_SHA }}
-
-      - name: Verify image tar exists
-        run: |
-          echo "Workspace: $GITHUB_WORKSPACE"
-          ls -la "$GITHUB_WORKSPACE"
-          if [ ! -f "$GITHUB_WORKSPACE/image.tar" ]; then
-            echo "::error::image.tar not found at $GITHUB_WORKSPACE/image.tar"
-            exit 1
-          fi
-          echo "image.tar size:"
-          du -h "$GITHUB_WORKSPACE/image.tar"
-
-
-      - name: Upload built image artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: image-tar
-          path: |
-            image.tar
-            image-name.txt
-
 
       - name: Set image output (robust)
         id: set-image
         run: |
           SHORT_SHA="${SHORT_SHA:-${GITHUB_SHA::8}}"
-          IMAGE="${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA}"
-          echo "IMAGE_DEBUG=$IMAGE"
-          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          # export only the tag (non-secret). DOCKERHUB_USERNAME is a secret and must not be embedded in outputs.
+          echo "image_tag=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           SHORT_SHA: ${{ env.SHORT_SHA }}
@@ -125,47 +97,6 @@ jobs:
           # keep cache used in the last 3 days (72h), and cap local builder storage to ~10GiB
           docker buildx prune --filter "until=72h" --keep-storage 10737418240 --force --all || true
 
-  push:
-    needs: build
-    runs-on: [local, dockermachine]
-    steps:
-      - name: Show runner info
-        run: |
-          echo "Runner: $(hostname)"
-          docker --version
-          docker info
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Download built image artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: image-tar
-          path: $GITHUB_WORKSPACE
-
-      - name: Load Docker image from artifact
-        run: docker load -i "$GITHUB_WORKSPACE/image.tar"
-
-      - name: Read image name from workspace and push
-        run: |
-          IMAGE=$(cat "$GITHUB_WORKSPACE/image-name.txt")
-          echo "IMAGE from file: $IMAGE"
-          docker push "$IMAGE"
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-
-      - name: Tag and push latest (only on main)
-        if: needs.build.outputs.push_latest == '1'
-        run: |
-          IMAGE=$(cat "$GITHUB_WORKSPACE/image-name.txt")
-          REPO="${IMAGE%:*}"
-          docker tag "$IMAGE" "${REPO}:latest"
-          docker push "${REPO}:latest"
-
   deploy_remote:
     needs: build
     runs-on: [remote, s4shost]
@@ -173,28 +104,24 @@ jobs:
       - name: Checkout repository (for compose files)
         uses: actions/checkout@v4
 
-      - name: Download built image artifact
-        uses: actions/download-artifact@v4
+      - name: Login to Docker Hub on remote runner
+        uses: docker/login-action@v2
         with:
-          name: image-tar
-          path: $GITHUB_WORKSPACE
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Show docker on remote runner
+      - name: Pull image on remote runner
         run: |
-          echo "Runner: $(hostname)"
-          docker --version || true
-          docker info || true
+          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${{ needs.build.outputs.image_tag }}"
+          echo "Pulling $IMAGE on remote"
+          docker pull "$IMAGE"
 
-      - name: Load image on remote runner
+      - name: Show loaded images (debug)
         run: |
-          echo "Loading image from $GITHUB_WORKSPACE/image.tar"
-          docker load -i "$GITHUB_WORKSPACE/image.tar"
-          echo "Loaded images:"
           docker images --format "{{.Repository}}:{{.Tag}}\t{{.Size}}"
 
       - name: Run docker compose on remote (uses docker compose in repo root)
         run: |
-          # default: use docker compose in repo root (docker-compose.yml)
-          # if your compose file is named differently, change -f argument
           cd $GITHUB_WORKSPACE
+          docker compose pull || true
           docker compose up -d --remove-orphans
