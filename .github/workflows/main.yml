@@ -97,6 +97,7 @@ jobs:
           # keep cache used in the last 3 days (72h), and cap local builder storage to ~10GiB
           docker buildx prune --filter "until=72h" --keep-storage 10737418240 --force --all || true
 
+
   deploy_remote:
     needs: build
     runs-on: [remote, s4shost]
@@ -115,6 +116,12 @@ jobs:
           IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${{ needs.build.outputs.image_tag }}"
           echo "Pulling $IMAGE on remote"
           docker pull "$IMAGE"
+
+      - name: Prepare compose env (set IMAGE)
+        run: |
+          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${{ needs.build.outputs.image_tag }}"
+          echo "IMAGE=${IMAGE}" > "$GITHUB_WORKSPACE/.env"
+          echo "Wrote .env with IMAGE=$IMAGE"
 
       - name: Show loaded images (debug)
         run: |
