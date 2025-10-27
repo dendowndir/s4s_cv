@@ -35,16 +35,23 @@ jobs:
       - name: Clean previous images of this repo only
         run: |
           echo "Cleaning previous images for ${DOCKERHUB_USERNAME}/s4s_cv except ${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA}"
-          set -o pipefail || true
+          set -o pipefail
           IMAGE_PREFIX="${DOCKERHUB_USERNAME}/s4s_cv:"
           CURRENT_TAG="${IMAGE_PREFIX}${SHORT_SHA}"
+
+          # debug: show values visible at runtime
+          echo "IMAGE_PREFIX=$IMAGE_PREFIX"
+          echo "CURRENT_TAG=$CURRENT_TAG"
+          echo "Docker images matching prefix:"
+          docker images --format '{{.Repository}}:{{.Tag}}' | grep "^${IMAGE_PREFIX}" || true
+
+          # remove other tags (by tag). final || true only applied to rmi to avoid failing workflow if nothing removed
           docker images --format '{{.Repository}}:{{.Tag}}' \
-            | grep "^${IMAGE_PREFIX}" || true \
-            | grep -v -x "${CURRENT_TAG}" || true \
+            | grep "^${IMAGE_PREFIX}" \
+            | grep -v -x "${CURRENT_TAG}" \
             | xargs -r docker rmi -f || true
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          SHORT_SHA: ${{ env.SHORT_SHA }}
 
       - name: Setup buildx
         uses: docker/setup-buildx-action@v2
@@ -97,9 +104,30 @@ jobs:
           # keep cache used in the last 3 days (72h), and cap local builder storage to ~10GiB
           docker buildx prune --filter "until=72h" --keep-storage 10737418240 --force --all || true
 
+  cleanup_remote:
+    needs: build
+    runs-on: [remote, s4shost]
+    steps:
+      - name: Checkout repository (for compose files)
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub on remote runner
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Stop and remove compose services and local images
+        run: |
+          # file: .github/workflows/main.yml step: cleanup_remote -> removing old compose services and images
+          cd $GITHUB_WORKSPACE
+          echo "docker compose down --remove-orphans --rmi local (removes containers and local images used by compose)"
+          # remove containers and images that compose created; does NOT remove remote registry images unless present locally
+          docker compose down --remove-orphans --rmi local || true
+
 
   deploy_remote:
-    needs: build
+    needs: cleanup_remote
     runs-on: [remote, s4shost]
     steps:
       - name: Checkout repository (for compose files)
@@ -113,9 +141,17 @@ jobs:
 
       - name: Pull image on remote runner
         run: |
-          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${{ needs.build.outputs.image_tag }}"
+          TAG="${{ needs.build.outputs.image_tag }}"
+          echo "DEBUG: tag from build: '${TAG}'"
+          if [ -z "$TAG" ]; then
+            echo "ERROR: image tag is empty. Aborting pull. Check build job logs for 'Set image output' step."
+            exit 1
+          fi
+          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${TAG}"
           echo "Pulling $IMAGE on remote"
           docker pull "$IMAGE"
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
 
       - name: Prepare compose env (set IMAGE)
         run: |
