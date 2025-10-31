@@ -150,7 +150,7 @@ jobs:
 
 
   deploy_remote:
-    needs: cleanup_remote
+    needs: [build, cleanup_remote]
     runs-on: [remote, s4shost]
     steps:
       - name: Checkout repository (for compose files)
