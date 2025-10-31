@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: [local, dockermachine]
     outputs:
-      image_tag: ${{ steps.set-image.outputs.image_tag }}
+      image_tag: ${{ steps.prepare.outputs.short_sha }}
       push_latest: ${{ steps.prepare.outputs.push_latest }}
 
 
@@ -28,6 +28,7 @@ jobs:
           else
             echo "push_latest=0" >> $GITHUB_OUTPUT
           fi
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
         env:
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_REF: ${{ github.ref }}
@@ -64,7 +65,7 @@ jobs:
 
       - name: Build Docker image with buildx and registry cache
         run: |
-          SHORT_SHA=${SHORT_SHA:-${GITHUB_SHA::8}}
+          SHORT_SHA=${{ steps.prepare.outputs.short_sha }}
           IMAGE="${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA}"
           CACHE_REF="${DOCKERHUB_USERNAME}/s4s_cv:buildcache"
           echo "Building ${IMAGE}, using cache ${CACHE_REF}"
@@ -76,29 +77,25 @@ jobs:
             .
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          SHORT_SHA: ${{ env.SHORT_SHA }}
           GITHUB_SHA: ${{ github.sha }}
 
       - name: Push built image to Docker Hub
         run: |
+          SHORT_SHA=${{ steps.prepare.outputs.short_sha }}
           IMAGE="${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA}"
           echo "Pushing ${IMAGE}"
           docker push "$IMAGE"
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          SHORT_SHA: ${{ env.SHORT_SHA }}
+
 
       - name: Set image output (robust)
         id: set-image
         run: |
-          # prefer runtime SHORT_SHA from GITHUB_ENV, fallback to first 8 chars of GITHUB_SHA
-          SHORT="${SHORT_SHA:-${GITHUB_SHA::8}}"
-          echo "DEBUG: resolved SHORT_SHA='${SHORT}'"
-          # emit job step output (always non-empty fallback)
-          echo "image_tag=${SHORT}" >> "$GITHUB_OUTPUT"
+          # use prepare.short_sha as canonical tag
+          echo "image_tag=${{ steps.prepare.outputs.short_sha }}" >> "$GITHUB_OUTPUT"
         env:
-          # SHORT_SHA was written earlier to GITHUB_ENV; expose GITHUB_SHA as fallback
-          SHORT_SHA: ${{ env.SHORT_SHA }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           GITHUB_SHA: ${{ github.sha }}
 
 
@@ -167,17 +164,9 @@ jobs:
 
       - name: Pull image on remote runner
         run: |
-          TAG="${{ needs.build.outputs.image_tag }}"
-          echo "DEBUG: tag from build: '${TAG}'"
-          if [ -z "$TAG" ]; then
-            echo "ERROR: image tag is empty. Aborting pull. Check build job logs for 'Set image output' step."
-            exit 1
-          fi
-          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${TAG}"
+          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${{ needs.build.outputs.image_tag }}"
           echo "Pulling $IMAGE on remote"
           docker pull "$IMAGE"
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
 
       - name: Prepare compose env (set IMAGE)
         run: |
