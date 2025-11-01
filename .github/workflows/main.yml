@@ -88,40 +88,6 @@ jobs:
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
 
-      - name: Install jq
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq
-
-      - name: Clean old Docker Hub tags (keep last 15)
-        run: |
-          set -e
-          REPO="${DOCKERHUB_USERNAME}/s4s_cv"
-          echo "Cleaning old tags for $REPO, keeping last 15..."
-
-          # Get all tags sorted by last updated
-          TAGS_JSON=$(curl -s -u "${DOCKERHUB_USERNAME}:${DOCKERHUB_TOKEN}" \
-            "https://hub.docker.com/v2/repositories/${REPO}/tags/?page_size=100")
-          
-          # Extract tag names sorted by last_updated descending
-          TAGS=$(echo "$TAGS_JSON" | jq -r '.results | sort_by(.last_updated) | reverse | .[].name')
-          
-          # Skip last 15
-          TAGS_TO_DELETE=$(echo "$TAGS" | tail -n +16)
-          
-          if [ -n "$TAGS_TO_DELETE" ]; then
-            echo "$TAGS_TO_DELETE" | while read TAG; do
-              echo "Deleting tag $TAG"
-              curl -s -X DELETE -u "${DOCKERHUB_USERNAME}:${DOCKERHUB_TOKEN}" \
-                "https://hub.docker.com/v2/repositories/${REPO}/tags/${TAG}/"
-            done
-          else
-            echo "Nothing to delete, less than 16 tags."
-          fi
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-
 
       - name: Set image output (robust)
         id: set-image
