@@ -1,0 +1,185 @@
+name: main
+
+on:
+  push:
+    branches: ["main", "workflow"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: [local, dockermachine]
+    outputs:
+      image_tag: ${{ steps.prepare.outputs.short_sha }}
+      push_latest: ${{ steps.prepare.outputs.push_latest }}
+
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare tags (do it before cleaning)
+        id: prepare
+        run: |
+          SHORT_SHA=${GITHUB_SHA::8}
+          echo "SHORT_SHA=${SHORT_SHA}" >> $GITHUB_ENV
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          if [ "$BRANCH" = "main" ]; then
+            echo "push_latest=1" >> $GITHUB_OUTPUT
+          else
+            echo "push_latest=0" >> $GITHUB_OUTPUT
+          fi
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF: ${{ github.ref }}
+
+      - name: Clean previous images of this repo only
+        run: |
+          echo "Cleaning previous images for ${DOCKERHUB_USERNAME}/s4s_cv except ${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA}"
+          set -o pipefail
+          IMAGE_PREFIX="${DOCKERHUB_USERNAME}/s4s_cv:"
+          CURRENT_TAG="${IMAGE_PREFIX}${SHORT_SHA}"
+
+          # debug: show values visible at runtime
+          echo "IMAGE_PREFIX=$IMAGE_PREFIX"
+          echo "CURRENT_TAG=$CURRENT_TAG"
+          echo "Docker images matching prefix:"
+          docker images --format '{{.Repository}}:{{.Tag}}' | grep "^${IMAGE_PREFIX}" || true
+
+          # remove other tags (by tag). final || true only applied to rmi to avoid failing workflow if nothing removed
+          docker images --format '{{.Repository}}:{{.Tag}}' \
+            | grep "^${IMAGE_PREFIX}" \
+            | grep -v -x "${CURRENT_TAG}" \
+            | xargs -r docker rmi -f || true
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+
+      - name: Setup buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to Docker Hub (needed for cache push/pull and push)
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build Docker image with buildx and registry cache
+        run: |
+          SHORT_SHA=${{ steps.prepare.outputs.short_sha }}
+          IMAGE="${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA}"
+          CACHE_REF="${DOCKERHUB_USERNAME}/s4s_cv:buildcache"
+          echo "Building ${IMAGE}, using cache ${CACHE_REF}"
+          docker buildx build \
+            --tag "${IMAGE}" \
+            --cache-from "type=registry,ref=${CACHE_REF}" \
+            --cache-to "type=registry,ref=${CACHE_REF},mode=max,push=true" \
+            --load \
+            .
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          GITHUB_SHA: ${{ github.sha }}
+
+      - name: Push built image to Docker Hub
+        run: |
+          SHORT_SHA=${{ steps.prepare.outputs.short_sha }}
+          IMAGE="${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA}"
+          echo "Pushing ${IMAGE}"
+          docker push "$IMAGE"
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+
+
+      - name: Set image output (robust)
+        id: set-image
+        run: |
+          # use prepare.short_sha as canonical tag
+          echo "image_tag=${{ steps.prepare.outputs.short_sha }}" >> "$GITHUB_OUTPUT"
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          GITHUB_SHA: ${{ github.sha }}
+
+
+      - name: Prune buildx builder cache (keep recent + cap local storage)
+        run: |
+          # keep cache used in the last 3 days (72h), and cap local builder storage to ~10GiB
+          docker buildx prune --filter "until=72h" --keep-storage 10737418240 --force --all || true
+
+  cleanup_remote:
+    needs: build
+    runs-on: [remote, s4shost]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to Docker Hub on remote runner
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Pre-deploy cleanup
+        run: |
+          set -euo pipefail
+          IMAGE_REPO="${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv"
+          NEW_TAG="${{ needs.build.outputs.image_tag }}"
+          if [ -z "$NEW_TAG" ]; then
+            echo "No image tag from build — skipping cleanup to avoid accidental deletion."
+            exit 0
+          fi
+          NEW_IMAGE="${IMAGE_REPO}:${NEW_TAG}"
+          echo "Keeping new image: ${NEW_IMAGE}"
+
+          # Stop and remove containers that use this repo but are not the new image
+          docker ps -a --filter "ancestor=${IMAGE_REPO}" --format '{{.ID}}\t{{.Image}}\t{{.Names}}' \
+            | while IFS=$'\t' read -r cid img name; do
+                [ -z "$cid" ] && continue
+                if [ "$img" != "$NEW_IMAGE" ]; then
+                  echo "Stopping and removing container $cid (image=$img name=$name)"
+                  docker rm -f "$cid" || echo "failed to remove container $cid (continuing)"
+                else
+                  echo "Keeping container $cid (image matches new image)"
+                fi
+              done
+
+          # Remove old images by IMAGE ID (dedupe with sort -u) but keep NEW_IMAGE
+          docker images --format '{{.Repository}}:{{.Tag}}\t{{.ID}}' --filter "reference=${IMAGE_REPO}:*" \
+            | awk -v keep="${NEW_IMAGE}" '$1 != keep {print $2}' \
+            | sort -u \
+            | xargs -r docker rmi -f || true
+
+          echo "Pre-deploy cleanup complete."
+
+
+  deploy_remote:
+    needs: [build, cleanup_remote]
+    runs-on: [remote, s4shost]
+    steps:
+      - name: Checkout repository (for compose files)
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub on remote runner
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Pull image on remote runner
+        run: |
+          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${{ needs.build.outputs.image_tag }}"
+          echo "Pulling $IMAGE on remote"
+          docker pull "$IMAGE"
+
+      - name: Prepare compose env (set IMAGE)
+        run: |
+          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${{ needs.build.outputs.image_tag }}"
+          echo "IMAGE=${IMAGE}" > "$GITHUB_WORKSPACE/.env"
+          echo "Wrote .env with IMAGE=$IMAGE"
+
+      - name: Show loaded images (debug)
+        run: |
+          docker images --format "{{.Repository}}:{{.Tag}}\t{{.Size}}"
+
+      - name: Run docker compose on remote (uses docker compose in repo root)
+        run: |
+          cd $GITHUB_WORKSPACE
+          docker compose pull || true
+          docker compose up -d --remove-orphans
