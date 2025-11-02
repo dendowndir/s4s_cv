@@ -109,31 +109,29 @@ jobs:
     needs: build
     runs-on: [remote, s4shost]
     steps:
-      - name: Stop and remove containers
+      - name: Stop and remove s4s_cv containers
         run: |
-          docker ps -q | xargs -r docker stop
-          
-          docker ps -aq | xargs -r docker rm
+          docker ps -a --filter "name=s4s_cv" -q | xargs -r docker stop
+          docker ps -a --filter "name=s4s_cv" -q | xargs -r docker rm
         continue-on-error: true
   
-      - name: Remove images
+      - name: Remove s4s_cv images
         run: |
           docker images usernames4s/s4s_cv -q | xargs -r docker rmi -f
-          
-          docker images -f "dangling=true" -q | xargs -r docker rmi
         continue-on-error: true
   
-      - name: Prune Docker system
+      - name: Prune Docker (without volumes)
         run: |
-          docker system prune -af --volumes
+          docker system prune -af
+          
         continue-on-error: true
   
       - name: Show remaining resources
         run: |
-          echo "=== Remaining containers ==="
+          echo "=== Containers ==="
           docker ps -a
           echo ""
-          echo "=== Remaining images ==="
+          echo "=== Images ==="
           docker images
           echo ""
           echo "=== Disk usage ==="
