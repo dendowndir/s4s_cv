@@ -1,6 +1,7 @@
 import React from "react";
 import { cn } from "@/lib/utils";
 import { Container } from "@/components/ui/container";
+import ThreeScene from "@/components/treejs/ThreeScene";
 
 interface Props {
   className?: string;
@@ -20,6 +21,7 @@ export const Profile: React.FC<Props> = ({ className }) => {
           src="https://i.pinimg.com/originals/22/f8/82/22f8829905251c8d1e88d81aed03c292.gif"
           alt="eye"
         />
+        <ThreeScene />
       </Container>
     </div>
   );
