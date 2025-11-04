@@ -2,8 +2,8 @@ name: main
 
 on:
   push:
-    branches: ["main", "workflow"]
-  workflow_dispatch:
+    branches:
+      - ["main", "workflow"]
 
 jobs:
   build:
@@ -11,7 +11,6 @@ jobs:
     outputs:
       image_tag: ${{ steps.prepare.outputs.short_sha }}
       push_latest: ${{ steps.prepare.outputs.push_latest }}
-
 
     steps:
       - name: Checkout repository
@@ -33,23 +32,24 @@ jobs:
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_REF: ${{ github.ref }}
 
-      - name: Clean previous images of this repo only
+      - name: Clean previous images of this repo only (preserve buildcache)
         run: |
-          echo "Cleaning previous images for ${DOCKERHUB_USERNAME}/s4s_cv except ${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA}"
+          echo "Cleaning previous images for ${DOCKERHUB_USERNAME}/s4s_cv except ${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA} and buildcache"
           set -o pipefail
           IMAGE_PREFIX="${DOCKERHUB_USERNAME}/s4s_cv:"
           CURRENT_TAG="${IMAGE_PREFIX}${SHORT_SHA}"
+          CACHE_TAG="${IMAGE_PREFIX}buildcache"
 
-          # debug: show values visible at runtime
           echo "IMAGE_PREFIX=$IMAGE_PREFIX"
           echo "CURRENT_TAG=$CURRENT_TAG"
-          echo "Docker images matching prefix:"
+          echo "CACHE_TAG=$CACHE_TAG"
           docker images --format '{{.Repository}}:{{.Tag}}' | grep "^${IMAGE_PREFIX}" || true
 
-          # remove other tags (by tag). final || true only applied to rmi to avoid failing workflow if nothing removed
+          # remove other tags but exclude current tag and cache tag
           docker images --format '{{.Repository}}:{{.Tag}}' \
             | grep "^${IMAGE_PREFIX}" \
             | grep -v -x "${CURRENT_TAG}" \
+            | grep -v -x "${CACHE_TAG}" \
             | xargs -r docker rmi -f || true
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -63,45 +63,37 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build Docker image with buildx and registry cache
+      - name: Pull registry cache image (best-effort)
         run: |
-          SHORT_SHA=${{ steps.prepare.outputs.short_sha }}
-          IMAGE="${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA}"
           CACHE_REF="${DOCKERHUB_USERNAME}/s4s_cv:buildcache"
-          echo "Building ${IMAGE}, using cache ${CACHE_REF}"
-          docker buildx build \
-            --tag "${IMAGE}" \
-            --cache-from "type=registry,ref=${CACHE_REF}" \
-            --cache-to "type=registry,ref=${CACHE_REF},mode=max,push=true" \
-            --load \
-            .
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          GITHUB_SHA: ${{ github.sha }}
-
-      - name: Push built image to Docker Hub
-        run: |
-          SHORT_SHA=${{ steps.prepare.outputs.short_sha }}
-          IMAGE="${DOCKERHUB_USERNAME}/s4s_cv:${SHORT_SHA}"
-          echo "Pushing ${IMAGE}"
-          docker push "$IMAGE"
+          echo "Trying to pull cache ${CACHE_REF}"
+          docker pull "${CACHE_REF}" || echo "No cache found (this is fine on first run)"
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
 
+      - name: Build and push image with buildx (registry cache)
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true                      # push final image to registry
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:${{ steps.prepare.outputs.short_sha }}
+          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:buildcache
+          cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/s4s_cv:buildcache,mode=max,push=true
+          # if you don't want to push final image for multi-arch, set push: false and use load: true for local
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
 
       - name: Set image output (robust)
         id: set-image
         run: |
-          # use prepare.short_sha as canonical tag
           echo "image_tag=${{ steps.prepare.outputs.short_sha }}" >> "$GITHUB_OUTPUT"
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           GITHUB_SHA: ${{ github.sha }}
 
-
       - name: Prune buildx builder cache (keep recent + cap local storage)
         run: |
-          # keep cache used in the last 3 days (72h), and cap local builder storage to ~10GiB
           docker buildx prune --filter "until=72h" --keep-storage 10737418240 --force --all || true
 
 
