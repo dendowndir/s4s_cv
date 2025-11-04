@@ -16,6 +16,10 @@ export const Profile: React.FC<Props> = ({ className }) => {
           ea, neque ab. Autem accusamus voluptates aperiam nesciunt veniam est
           voluptate.
         </h1>
+        <img
+          src="https://i.pinimg.com/originals/22/f8/82/22f8829905251c8d1e88d81aed03c292.gif"
+          alt="eye"
+        />
       </Container>
     </div>
   );
