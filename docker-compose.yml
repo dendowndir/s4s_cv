@@ -13,7 +13,7 @@ services:
     env_file:
       - .env        # runtime envs (do not commit .env with secrets)
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     # If you want persistent logs or to serve from host volume in dev:
     # volumes:
     #   - ./:/app:ro
