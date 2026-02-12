@@ -3,6 +3,8 @@ version: "3.8"
 
 services:
   app:
+    tmpfs:
+      - /tmp:size=512m
     build:
       context: .
       # you can pass build args if you need build-time envs
@@ -17,3 +19,4 @@ services:
     # If you want persistent logs or to serve from host volume in dev:
     # volumes:
     #   - ./:/app:ro
+    
