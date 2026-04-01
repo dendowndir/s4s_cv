@@ -3,8 +3,7 @@ version: "3.8"
 
 services:
   app:
-    tmpfs:
-      - /tmp:size=512m
+
     build:
       context: .
       # you can pass build args if you need build-time envs
@@ -19,4 +18,22 @@ services:
     # If you want persistent logs or to serve from host volume in dev:
     # volumes:
     #   - ./:/app:ro
+
+    deploy:
+      resources:
+        limits:
+          cpus: '0.80'
+          memory: 850M
+        reservations:
+          memory: 256M
+
+    tmpfs:
+      - /tmp:size=256m
+      - /app/.next/cache:size=256m
+      
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "25m"
+        max-file: "3"
     
