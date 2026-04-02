@@ -32,16 +32,13 @@ WORKDIR /app
 # Create non-root user (Alpine flags)
 RUN addgroup -S appgroup && adduser -S -G appgroup appuser
 
-# Copy only the runtime artifacts from the builder
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/package-lock.json ./package-lock.json
-COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
-COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
 
 USER appuser
 
 EXPOSE 3000
 
 # Use Next's CLI directly from node_modules to avoid running npm in production
-CMD ["node", "node_modules/next/dist/bin/next", "start", "-p", "3000"]
+CMD ["node", "server.js"]

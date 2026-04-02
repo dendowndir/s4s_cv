@@ -28,8 +28,8 @@ services:
           memory: 256M
 
     tmpfs:
-      - /tmp:size=256m
-      - /app/.next/cache:size=256m
+      - /tmp:size=512m
+      - /app/.next/cache:size=512m
       
     logging:
       driver: "json-file"
